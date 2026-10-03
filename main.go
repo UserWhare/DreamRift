@@ -35,7 +35,7 @@ func main() {
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		_, _ = fmt.Fprintf(w, `{"status":"online","app":"DreamRift V5","time":"%s"}`, time.Now().Format(time.RFC3339))
+		_, _ = fmt.Fprintf(w, `{"status":"online","app":"DreamRift V6","time":"%s"}`, time.Now().Format(time.RFC3339))
 	})
 
 	server := &http.Server{
@@ -44,7 +44,7 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	log.Printf("DreamRift V5 rodando em http://localhost:%s", port)
+	log.Printf("DreamRift V6 rodando em http://localhost:%s", port)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}

@@ -1,7 +1,12 @@
 "use strict";
 
-const STORAGE_KEY = "dreamrift.v5.dreams";
-const SETTINGS_KEY = "dreamrift.v5.settings";
+const STORAGE_KEY = "dreamrift.v6.dreams";
+const SETTINGS_KEY = "dreamrift.v6.settings";
+const META_KEY = "dreamrift.v6.meta";
+const LEGACY_STORAGE_KEY = "dreamrift.v5.dreams";
+const LEGACY_SETTINGS_KEY = "dreamrift.v5.settings";
+const V6 = window.DreamRiftFeatures || {};
+const V6Storage = window.DreamRiftStorage || {};
 const $ = (q, root = document) => root.querySelector(q);
 const $$ = (q, root = document) => [...root.querySelectorAll(q)];
 
@@ -210,6 +215,7 @@ const rarityLevels = [
 let state = {
   dreams: loadDreams(),
   settings: loadSettings(),
+  meta: loadMeta(),
   currentView: "home"
 };
 
@@ -218,7 +224,10 @@ function init() {
   hydrateDailyWords();
   bindEvents();
   applySettings();
+  reconcileV6Meta();
+  applyMoodTheme($("#mood")?.value || "liminal");
   renderAll();
+  syncV6UI();
 }
 
 function populateMoods() {
@@ -231,12 +240,21 @@ function bindEvents() {
   $("#intensity").addEventListener("input", (e) => $("#intensityText").textContent = e.target.value);
   $("#randomWords").addEventListener("click", () => useWords(randomWords()));
   $("#useDaily").addEventListener("click", () => useWords(getDailyWords()));
+  $("#generateDaily").addEventListener("click", () => {
+    useWords(getDailyWords());
+    $("#intensity").value = "72";
+    $("#intensityText").textContent = "72";
+    generateFlow({ daily: true });
+  });
   $("#generate").addEventListener("click", generateFlow);
+  $("#mood").addEventListener("change", (event) => applyMoodTheme(event.target.value));
   ["#word1", "#word2", "#word3"].forEach(id => $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") generateFlow(); }));
   $("#search").addEventListener("input", renderArchive);
   $("#filter").addEventListener("change", renderArchive);
   $("#exportAll").addEventListener("click", exportAll);
   $("#downloadBackup").addEventListener("click", exportAll);
+  $("#importBackup").addEventListener("click", () => $("#backupFile").click());
+  $("#backupFile").addEventListener("change", importBackupFile);
   $("#seedDemo").addEventListener("click", seedDemo);
   $("#clearAll").addEventListener("click", clearAll);
   $("#compactMode").addEventListener("change", updateSettingsFromUI);
@@ -252,23 +270,48 @@ function setView(view) {
   if (view === "archive") renderArchive();
   if (view === "ranking") renderRanking();
   if (view === "favorites") renderFavorites();
+  if (view === "codex") renderCodex();
   if (view === "stats") renderStats();
 }
 
 function loadDreams() {
-  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"); } catch { return []; }
+  try {
+    V6Storage.migrateLegacy?.();
+    const raw = localStorage.getItem(STORAGE_KEY) || localStorage.getItem(LEGACY_STORAGE_KEY) || "[]";
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.map(normalizeDreamV6) : [];
+  } catch {
+    return [];
+  }
 }
 
 function saveDreams() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state.dreams.slice(0, 250)));
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state.dreams.slice(0, 1000)));
+  saveMeta();
+  V6Storage.mirrorSnapshot?.({
+    version: 6,
+    savedAt: new Date().toISOString(),
+    dreams: state.dreams,
+    settings: state.settings,
+    meta: state.meta
+  });
   renderAll();
 }
 
 function loadSettings() {
   try {
-    return { compact: true, reduceMotion: true, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}") };
+    V6Storage.migrateLegacy?.();
+    const raw = localStorage.getItem(SETTINGS_KEY) || localStorage.getItem(LEGACY_SETTINGS_KEY) || "{}";
+    const loaded = { compact: false, reduceMotion: false, ...JSON.parse(raw) };
+    if (loaded.visualPreset !== 2) {
+      loaded.compact = false;
+      loaded.reduceMotion = false;
+      loaded.visualPreset = 2;
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(loaded));
+    }
+    return loaded;
   } catch {
-    return { compact: true, reduceMotion: true };
+    return { compact: false, reduceMotion: false, visualPreset: 2 };
   }
 }
 
@@ -292,8 +335,11 @@ function updateSettingsFromUI() {
 }
 
 function getDailyWords() {
-  const day = Math.floor(Date.now() / 86400000);
-  return dailySets[day % dailySets.length];
+  const now = new Date();
+  const key = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  let hash = 0;
+  for (const char of key) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return dailySets[hash % dailySets.length];
 }
 
 function hydrateDailyWords() {
@@ -311,14 +357,16 @@ function randomWords() {
   return [...wordBank].sort(() => Math.random() - 0.5).slice(0, 3);
 }
 
-function generateFlow() {
+function generateFlow(options = {}) {
+  if (options instanceof Event) options = {};
   const run = () => {
     const dream = buildDream();
+    const reward = awardDreamProgress(dream, options);
     state.dreams.unshift(dream);
     saveDreams();
     renderResult(dream);
     setView("home");
-    toast("Sonho gerado");
+    toast(reward.dailyBonus ? `Fenda concluída +${reward.total} fragmentos` : `Sonho gerado +${reward.total} fragmentos`);
   };
 
   if ($("#ritual").checked && !state.settings.reduceMotion) {
@@ -378,7 +426,7 @@ function buildDream() {
   const interpretation = buildInterpretation({ words, mood, size, rarity, metrics, oddity, symbols });
   const warning = buildWarning(words, oddity, sizeKey);
 
-  return {
+  const dream = {
     id: uid(),
     createdAt: new Date().toISOString(),
     title,
@@ -396,8 +444,29 @@ function buildDream() {
     interpretation,
     warning,
     symbols,
-    favorite: false
+    favorite: false,
+    version: 6
   };
+
+  dream.connection = V6.findConnection?.(dream, state.dreams) || null;
+  dream.anomaly = V6.detectAnomaly?.(dream) || null;
+
+  if (dream.connection) {
+    dream.sections.splice(Math.max(1, dream.sections.length - 1), 0, {
+      title: "Eco",
+      text: `Por alguns segundos, a fenda encostou em “${dream.connection.title}”. ${dream.connection.reason}. O sonho seguiu como se essa memória sempre tivesse pertencido a ele.`
+    });
+  }
+
+  if (dream.anomaly) {
+    dream.sections.splice(Math.max(1, dream.sections.length - 1), 0, {
+      title: "Anomalia",
+      text: dream.anomaly.description
+    });
+  }
+
+  dream.story = dream.sections.map(section => section.text).join("\n\n");
+  return dream;
 }
 
 function buildSections(ctx) {
@@ -463,10 +532,10 @@ function buildWarning(words, oddity, sizeKey) {
 
 function makeTitle(words, mood, rarity, size) {
   const patterns = [
-    `O ${titleCase(words[0])} Dentro de ${article(words[1])} ${titleCase(words[1])}`,
+    `${titleCase(words[0])} Dentro de ${article(words[1])} ${titleCase(words[1])}`,
     `Arquivo ${titleCase(words[2])}`,
     `${titleCase(words[0])} no ${mood.label}`,
-    `A Noite do ${titleCase(words[1])}`,
+    `A Noite de ${titleCase(words[1])}`,
     `Manual Para Não Sonhar com ${titleCase(words[2])}`,
     `Inventário de ${titleCase(words[0])}, ${titleCase(words[1])} e ${titleCase(words[2])}`,
     `Quando ${titleCase(words[2])} Aprendeu Seu Nome`
@@ -481,7 +550,9 @@ function renderAll() {
   renderArchive();
   renderRanking();
   renderFavorites();
+  renderCodex();
   renderStats();
+  syncV6UI();
 }
 
 function renderResult(dream) {
@@ -489,6 +560,7 @@ function renderResult(dream) {
   result.classList.remove("empty");
   result.innerHTML = dreamFullHTML(dream, false);
   bindDreamActions(result);
+  applyMoodTheme(dream.mood);
 }
 
 function dreamFullHTML(dream, modal = false) {
@@ -513,6 +585,7 @@ function dreamFullHTML(dream, modal = false) {
       </div>
 
       ${storyHTML(dream)}
+      ${v6ContextHTML(dream)}
 
       <div class="meta-grid">
         ${meterHTML("Lucidez", dream.metrics.lucidity)}
@@ -614,10 +687,19 @@ function renderStats() {
   const fav = state.dreams.filter(d => d.favorite).length;
   const max = total ? Math.max(...state.dreams.map(d => d.oddity)) : 0;
   const rarity = dominantRarity();
+  const progress = V6.progressFor?.(state.meta.totalFragments || 0) || { level: 1, percent: 0, remaining: 35 };
   $("#statTotal").textContent = total;
   $("#statFav").textContent = fav;
   $("#statMax").textContent = max;
   $("#statRarity").textContent = rarity;
+  $("#statLevel").textContent = progress.level;
+  $("#statFragments").textContent = state.meta.fragments || 0;
+  $("#statDaily").textContent = state.meta.daily?.streak || 0;
+  $("#statAnomalies").textContent = state.meta.codex?.anomalies?.length || 0;
+  $("#profileRank").textContent = V6.rankFor?.(progress.level) || "Errante";
+  $("#profileNextLevel").textContent = `${progress.remaining} fragmentos restantes`;
+  $("#profileProgressBar").style.width = `${progress.percent}%`;
+  $("#profileSummary").textContent = V6.profileSummary?.(state.meta, state.dreams) || "A fenda ainda não conhece seu padrão.";
 }
 
 function dominantRarity() {
@@ -694,24 +776,35 @@ function exportDream(id) {
 }
 
 function exportAll() {
-  downloadJSON(`dreamrift-backup-${new Date().toISOString().slice(0,10)}.json`, state.dreams);
+  const bundle = V6Storage.createBackup?.(state.dreams, state.settings, state.meta) || {
+    format: "dreamrift-backup",
+    version: 6,
+    exportedAt: new Date().toISOString(),
+    dreams: state.dreams,
+    settings: state.settings,
+    meta: state.meta
+  };
+  downloadJSON(`dreamrift-v6-backup-${new Date().toISOString().slice(0,10)}.json`, bundle);
 }
 
 function openDream(id) {
   const dream = findDream(id);
   if (!dream) return;
+  applyMoodTheme(dream.mood);
   $("#modalBody").innerHTML = dreamFullHTML(dream, true);
   bindDreamActions($("#modalBody"));
   $("#modal").showModal();
 }
 
 function clearAll() {
-  if (!state.dreams.length) return toast("Arquivo já vazio");
-  if (!confirm("Limpar todo o arquivo de sonhos?")) return;
+  const hasProgress = (state.meta.totalFragments || 0) > 0 || state.dreams.length > 0;
+  if (!hasProgress) return toast("Arquivo já vazio");
+  if (!confirm("Limpar sonhos, progressão e Codex?")) return;
   state.dreams = [];
+  state.meta = defaultMeta();
   saveDreams();
   renderEmptyResult();
-  toast("Arquivo limpo");
+  toast("Dados locais limpos");
 }
 
 function seedDemo() {
@@ -735,6 +828,187 @@ function seedDemo() {
   $("#dreamSize").value = oldSize;
   saveDreams();
   toast("Demo criada");
+}
+
+function defaultMeta() {
+  return {
+    version: 6,
+    fragments: 0,
+    totalFragments: 0,
+    generated: 0,
+    daily: { lastKey: null, streak: 0, completed: [] },
+    codex: { moods: [], anomalies: [], symbols: [] },
+    achievements: []
+  };
+}
+
+function loadMeta() {
+  try {
+    const raw = localStorage.getItem(META_KEY);
+    return normalizeMeta(raw ? JSON.parse(raw) : defaultMeta());
+  } catch {
+    return defaultMeta();
+  }
+}
+
+function normalizeMeta(meta) {
+  const base = defaultMeta();
+  const value = meta && typeof meta === "object" ? meta : {};
+  return {
+    ...base,
+    ...value,
+    daily: { ...base.daily, ...(value.daily || {}) },
+    codex: {
+      moods: Array.from(new Set(value.codex?.moods || [])),
+      anomalies: Array.from(new Set(value.codex?.anomalies || [])),
+      symbols: Array.from(new Set(value.codex?.symbols || []))
+    },
+    achievements: Array.from(new Set(value.achievements || []))
+  };
+}
+
+function saveMeta() {
+  localStorage.setItem(META_KEY, JSON.stringify(state.meta));
+}
+
+function normalizeDreamV6(dream) {
+  if (!dream || typeof dream !== "object") return dream;
+  return {
+    ...dream,
+    version: dream.version || 5,
+    size: dream.size || "medio",
+    sizeLabel: dream.sizeLabel || "Médio",
+    rarity: dream.rarity || getRarity(Number(dream.oddity) || 0),
+    metrics: dream.metrics || { lucidity: 50, threat: 50, nonsense: 50, nostalgia: 50 },
+    symbols: Array.isArray(dream.symbols) ? dream.symbols : [],
+    sections: Array.isArray(dream.sections) ? dream.sections : []
+  };
+}
+
+function reconcileV6Meta() {
+  state.meta = normalizeMeta(state.meta);
+  state.meta.generated = Math.max(Number(state.meta.generated) || 0, state.dreams.length);
+  state.dreams.forEach(dream => {
+    if (dream.mood && !state.meta.codex.moods.includes(dream.mood)) state.meta.codex.moods.push(dream.mood);
+    (dream.words || []).forEach(word => {
+      const clean = normalizeWord(word);
+      if (clean && !state.meta.codex.symbols.includes(clean)) state.meta.codex.symbols.push(clean);
+    });
+    if (dream.anomaly?.key && !state.meta.codex.anomalies.includes(dream.anomaly.key)) state.meta.codex.anomalies.push(dream.anomaly.key);
+  });
+  saveMeta();
+}
+
+function awardDreamProgress(dream, options = {}) {
+  const base = V6.fragmentsFor?.(dream) ?? Math.max(3, Math.round(dream.oddity / 12));
+  let dailyBonus = 0;
+  let anomalyBonus = 0;
+  state.meta.generated = (state.meta.generated || 0) + 1;
+
+  if (!state.meta.codex.moods.includes(dream.mood)) state.meta.codex.moods.push(dream.mood);
+  dream.words.forEach(word => {
+    const clean = normalizeWord(word);
+    if (clean && !state.meta.codex.symbols.includes(clean)) state.meta.codex.symbols.push(clean);
+  });
+
+  if (dream.anomaly?.key && !state.meta.codex.anomalies.includes(dream.anomaly.key)) {
+    state.meta.codex.anomalies.push(dream.anomaly.key);
+    anomalyBonus = 12;
+  }
+
+  if (options.daily) {
+    const today = V6.dailyKey?.() || new Date().toISOString().slice(0, 10);
+    if (!state.meta.daily.completed.includes(today)) {
+      const previous = state.meta.daily.lastKey;
+      state.meta.daily.streak = V6.isPreviousDay?.(previous, today) ? (state.meta.daily.streak || 0) + 1 : 1;
+      state.meta.daily.lastKey = today;
+      state.meta.daily.completed.push(today);
+      state.meta.daily.completed = state.meta.daily.completed.slice(-120);
+      dailyBonus = 25;
+    }
+  }
+
+  const total = base + dailyBonus + anomalyBonus;
+  state.meta.fragments = (state.meta.fragments || 0) + total;
+  state.meta.totalFragments = (state.meta.totalFragments || 0) + total;
+  state.meta.level = V6.progressFor?.(state.meta.totalFragments)?.level || 1;
+  saveMeta();
+  return { total, base, dailyBonus, anomalyBonus };
+}
+
+function v6ContextHTML(dream) {
+  const blocks = [];
+  if (dream.anomaly) {
+    blocks.push(`<div class="context-card anomaly"><b>Anomalia · ${escapeHTML(dream.anomaly.title)}</b><br>${escapeHTML(dream.anomaly.hint || "Combinação rara registrada no Codex.")}</div>`);
+  }
+  if (dream.connection) {
+    blocks.push(`<div class="context-card connection"><b>Sonho conectado</b><br>Eco de ${escapeHTML(dream.connection.title)} — ${escapeHTML(dream.connection.reason)}.</div>`);
+  }
+  return blocks.length ? `<div class="v6-context">${blocks.join("")}</div>` : "";
+}
+
+function renderCodex() {
+  const grid = $("#codexGrid");
+  if (!grid) return;
+  const cards = V6.codexCards?.(state.meta, state.dreams) || [];
+  $("#codexUnlocked").textContent = cards.filter(card => card.unlocked).length;
+  grid.innerHTML = cards.map(card => `
+    <article class="codex-card ${card.unlocked ? "" : "locked"}">
+      <span class="codex-type">${escapeHTML(card.type)}</span>
+      <h3>${escapeHTML(card.unlocked ? card.title : "Registro bloqueado")}</h3>
+      <p>${escapeHTML(card.unlocked ? card.description : card.hint)}</p>
+      <footer>${escapeHTML(card.unlocked ? card.footer : "Continue atravessando fendas.")}</footer>
+    </article>`).join("");
+}
+
+function syncV6UI() {
+  const progress = V6.progressFor?.(state.meta.totalFragments || 0) || { level: 1, current: 0, needed: 35, percent: 0 };
+  const cards = V6.codexCards?.(state.meta, state.dreams) || [];
+  const unlocked = cards.filter(card => card.unlocked).length;
+  const percent = cards.length ? Math.round((unlocked / cards.length) * 100) : 0;
+  $("#profileLevel").textContent = progress.level;
+  $("#profileFragments").textContent = state.meta.fragments || 0;
+  $("#profileLevelProgress").textContent = `${progress.current} / ${progress.needed} fragmentos`;
+  $("#profileCodex").textContent = `${percent}%`;
+  $("#profileCodexCount").textContent = `${unlocked} descobertas`;
+
+  const today = V6.dailyKey?.() || new Date().toISOString().slice(0, 10);
+  const complete = state.meta.daily.completed.includes(today);
+  $(".daily-rift")?.classList.toggle("complete", complete);
+  $("#dailyStatus").textContent = complete
+    ? `Fenda concluída hoje. Sequência: ${state.meta.daily.streak || 1} dia(s).`
+    : "Complete a fenda para receber +25 fragmentos.";
+  $("#dailyButtonText").textContent = complete ? "Revisitar fenda" : "Entrar na fenda";
+}
+
+function applyMoodTheme(mood) {
+  document.body.dataset.mood = mood || "liminal";
+}
+
+async function importBackupFile(event) {
+  const file = event.target.files?.[0];
+  event.target.value = "";
+  if (!file) return;
+  try {
+    const parsed = JSON.parse(await file.text());
+    const normalized = V6Storage.normalizeBackup?.(parsed);
+    if (!normalized) throw new Error("Formato inválido");
+    if (!confirm("Importar este backup e substituir os dados locais atuais?")) return;
+    state.dreams = (normalized.dreams || []).map(normalizeDreamV6);
+    state.settings = { compact: false, reduceMotion: false, visualPreset: 2, ...(normalized.settings || {}) };
+    state.meta = normalizeMeta(normalized.meta || defaultMeta());
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state.dreams));
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.settings));
+    saveMeta();
+    reconcileV6Meta();
+    applySettings();
+    renderEmptyResult();
+    renderAll();
+    toast("Backup importado");
+  } catch (error) {
+    console.warn("DreamRift: backup inválido", error);
+    toast("Backup inválido");
+  }
 }
 
 function dreamText(dream) {
@@ -790,8 +1064,18 @@ function removeAccents(text) {
   return String(text || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 }
 
+const feminineWords = new Set([
+  "porta", "catedral", "neblina", "janela", "máquina", "maquina", "escada", "máscara", "mascara",
+  "chave", "floresta", "boneca", "igreja", "fita", "formiga", "lua", "corrente", "coroa", "caixa",
+  "fotografia", "agulha", "ponte", "sombra", "nuvem", "sala"
+]);
+const pluralFeminineWords = new Set(["cinzas"]);
+
 function article(word) {
-  return /^[aeiouáàâãéêíóôõú]/i.test(word) ? "um estranho" : "um";
+  const clean = removeAccents(String(word || "").toLowerCase());
+  if (pluralFeminineWords.has(clean)) return "umas";
+  if (feminineWords.has(clean)) return "uma";
+  return "um";
 }
 
 function capitalize(text) {

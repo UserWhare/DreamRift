@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>DreamRift V5</title>
-  <meta name="description" content="Gerador dark e minimalista de sonhos estranhos." />
+  <title>DreamRift V6</title>
+  <meta name="description" content="DreamRift V6 — sonhos estranhos, progressão, Codex, anomalias e fendas conectadas." />
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
@@ -24,9 +24,9 @@
   </svg>
 
   <aside class="rail" aria-label="Navegação">
-    <div class="brand" title="DreamRift V5">
+    <div class="brand" title="DreamRift V6">
       <span class="brand-mark"><svg><use href="#i-dream"></use></svg></span>
-      <div><strong>DreamRift</strong><small>V5 Deep</small></div>
+      <div><strong>DreamRift</strong><small>V6 Rift</small></div>
     </div>
 
     <nav class="nav">
@@ -34,7 +34,8 @@
       <button class="nav-btn" data-view="archive"><svg><use href="#i-archive"></use></svg><span>Arquivo</span></button>
       <button class="nav-btn" data-view="ranking"><svg><use href="#i-rank"></use></svg><span>Ranking</span></button>
       <button class="nav-btn" data-view="favorites"><svg><use href="#i-heart"></use></svg><span>Favoritos</span></button>
-      <button class="nav-btn" data-view="stats"><svg><use href="#i-stats"></use></svg><span>Status</span></button>
+      <button class="nav-btn" data-view="codex"><svg><use href="#i-eye"></use></svg><span>Codex</span></button>
+      <button class="nav-btn" data-view="stats"><svg><use href="#i-stats"></use></svg><span>Perfil</span></button>
       <button class="nav-btn" data-view="settings"><svg><use href="#i-settings"></use></svg><span>Ajustes</span></button>
     </nav>
 
@@ -49,9 +50,9 @@
       <header class="topbar">
         <div>
           <p class="kicker">gerador onírico</p>
-          <h1>3 palavras. Um sonho mais profundo.</h1>
+          <h1>3 palavras. Uma fenda inteira.</h1>
         </div>
-        <button id="useDaily" class="chip" type="button" title="Usar palavras do dia"><svg><use href="#i-plus"></use></svg><span id="dailyWords">—</span></button>
+        <button id="useDaily" class="chip daily-chip" type="button" title="Usar palavras da Fenda do Dia"><svg><use href="#i-plus"></use></svg><span><b>Fenda do Dia</b><em id="dailyWords">—</em></span></button>
       </header>
 
       <section class="panel creator">
@@ -70,13 +71,28 @@
             <option value="delirio">Delírio</option>
           </select></label>
           <label class="range-label"><span>Estranheza <b id="intensityText">60</b></span><input id="intensity" type="range" min="1" max="100" value="60" /></label>
-          <label class="switch"><input id="ritual" type="checkbox" /><i></i><span>Animação leve</span></label>
+          <label class="switch"><input id="ritual" type="checkbox" checked /><i></i><span>Animação leve</span></label>
         </div>
 
         <div class="actions">
           <button id="randomWords" class="btn muted" type="button"><svg><use href="#i-plus"></use></svg>Palavras</button>
           <button id="generate" class="btn primary" type="button"><svg><use href="#i-dream"></use></svg>Gerar</button>
         </div>
+      </section>
+
+      <section class="v6-strip" aria-label="Progresso">
+        <article><span>Nível</span><b id="profileLevel">1</b><small id="profileLevelProgress">0 / 35 fragmentos</small></article>
+        <article><span>Fragmentos</span><b id="profileFragments">0</b><small>energia acumulada</small></article>
+        <article><span>Codex</span><b id="profileCodex">0%</b><small id="profileCodexCount">0 descobertas</small></article>
+      </section>
+
+      <section class="daily-rift panel">
+        <div>
+          <p class="kicker">fenda do dia</p>
+          <h3 id="dailyTitle">Três símbolos fixos por 24 horas.</h3>
+          <p id="dailyStatus">Complete a fenda para receber fragmentos extras.</p>
+        </div>
+        <button id="generateDaily" class="btn muted" type="button"><svg><use href="#i-dream"></use></svg><span id="dailyButtonText">Entrar na fenda</span></button>
       </section>
 
       <section id="result" class="result empty">
@@ -103,22 +119,39 @@
       <div id="favoritesList" class="cards"></div>
     </section>
 
+    <section id="codex" class="view">
+      <header class="page-head">
+        <div><p class="kicker">arquivo impossível</p><h2>Codex</h2></div>
+        <div class="codex-summary"><b id="codexUnlocked">0</b><span>descobertas</span></div>
+      </header>
+      <div id="codexGrid" class="codex-grid"></div>
+    </section>
+
     <section id="stats" class="view">
-      <header class="page-head"><div><p class="kicker">local</p><h2>Status</h2></div></header>
+      <header class="page-head"><div><p class="kicker">perfil local</p><h2>Perfil</h2></div><span class="profile-rank" id="profileRank">Errante</span></header>
       <div class="stats-grid">
         <article><span>Sonhos</span><b id="statTotal">0</b></article>
         <article><span>Favoritos</span><b id="statFav">0</b></article>
-        <article><span>Maior</span><b id="statMax">0</b></article>
-        <article><span>Raridade</span><b id="statRarity">—</b></article>
+        <article><span>Maior estranheza</span><b id="statMax">0</b></article>
+        <article><span>Raridade dominante</span><b id="statRarity">—</b></article>
+        <article><span>Nível</span><b id="statLevel">1</b></article>
+        <article><span>Fragmentos</span><b id="statFragments">0</b></article>
+        <article><span>Sequência diária</span><b id="statDaily">0</b></article>
+        <article><span>Anomalias</span><b id="statAnomalies">0</b></article>
       </div>
+      <section class="profile-panel panel">
+        <div><span>Próximo nível</span><b id="profileNextLevel">35 fragmentos restantes</b></div>
+        <i><span id="profileProgressBar"></span></i>
+        <p id="profileSummary">A fenda ainda não conhece seu padrão.</p>
+      </section>
     </section>
 
     <section id="settings" class="view">
       <header class="page-head"><div><p class="kicker">config</p><h2>Ajustes</h2></div></header>
       <div class="panel settings">
-        <div class="setting-row"><div><strong>Modo compacto</strong><span>Fonte menor e cards mais densos.</span></div><label class="switch"><input id="compactMode" type="checkbox" checked /><i></i></label></div>
-        <div class="setting-row"><div><strong>Reduzir animações</strong><span>Melhor para PCs mais fracos.</span></div><label class="switch"><input id="reduceMotion" type="checkbox" checked /><i></i></label></div>
-        <div class="setting-row"><div><strong>Dados locais</strong><span>Exportar, demo ou limpar tudo.</span></div><div class="inline-actions"><button id="downloadBackup" class="btn muted"><svg><use href="#i-download"></use></svg>Backup</button><button id="seedDemo" class="btn muted">Demo</button><button id="clearAll" class="btn danger"><svg><use href="#i-trash"></use></svg>Limpar</button></div></div>
+        <div class="setting-row"><div><strong>Modo compacto</strong><span>Fonte menor e cards mais densos.</span></div><label class="switch"><input id="compactMode" type="checkbox" /><i></i></label></div>
+        <div class="setting-row"><div><strong>Reduzir animações</strong><span>Melhor para PCs mais fracos.</span></div><label class="switch"><input id="reduceMotion" type="checkbox" /><i></i></label></div>
+        <div class="setting-row"><div><strong>Dados locais</strong><span>Backup V6, importação, demo ou limpeza completa.</span></div><div class="inline-actions"><button id="downloadBackup" class="btn muted"><svg><use href="#i-download"></use></svg>Backup</button><button id="importBackup" class="btn muted">Importar</button><input id="backupFile" class="visually-hidden" type="file" accept="application/json,.json" /><button id="seedDemo" class="btn muted">Demo</button><button id="clearAll" class="btn danger"><svg><use href="#i-trash"></use></svg>Limpar</button></div></div>
       </div>
     </section>
   </main>
@@ -139,6 +172,9 @@
     <div id="modalBody"></div>
   </dialog>
 
+  <script src="/static/v6-data.js"></script>
+  <script src="/static/v6-storage.js"></script>
+  <script src="/static/v6-features.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>
